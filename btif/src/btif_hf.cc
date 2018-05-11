@@ -51,6 +51,7 @@
 #include "osi/include/properties.h"
 #include <cutils/properties.h>
 #include "device/include/controller.h"
+#include "btif_storage.h"
 
 namespace bluetooth {
 namespace headset {
@@ -404,7 +405,7 @@ static bool IsSlcConnected(RawAddress* bd_addr) {
     return false;
   }
   int idx = btif_hf_idx_by_bdaddr(bd_addr);
-  if (idx < 0 || idx > BTA_AG_MAX_NUM_CLIENTS) {
+  if (idx < 0 || idx >= BTA_AG_MAX_NUM_CLIENTS) {
     LOG(WARNING) << __func__ << ": invalid index " << idx << " for "
                  << *bd_addr;
     return false;
@@ -491,6 +492,8 @@ static void btif_hf_upstreams_evt(uint16_t event, char* p_param) {
       break;
 
     case BTA_AG_OPEN_EVT:
+      BTIF_TRACE_DEBUG("%s:p_data->open.status:%d,btif_hf_cb[idx].state:%d,btif_max_hf_clients:%d",
+                         __func__, p_data->open.status, btif_hf_cb[idx].state, btif_max_hf_clients);
       if (p_data->open.status == BTA_AG_SUCCESS) {
         btif_hf_cb[idx].connected_bda = p_data->open.bd_addr;
         btif_hf_cb[idx].state = BTHF_CONNECTION_STATE_CONNECTED;
@@ -522,6 +525,7 @@ static void btif_hf_upstreams_evt(uint16_t event, char* p_param) {
       }
       if (ignore_rfc_fail != true)
       {
+        VLOG(1) << __func__ << "btif_hf_cb[idx].connected_bda:" << btif_hf_cb[idx].connected_bda;
         HAL_HF_CBACK(bt_hf_callbacks, ConnectionStateCallback, btif_hf_cb[idx].state,
               &btif_hf_cb[idx].connected_bda);
       }
@@ -872,6 +876,10 @@ bt_status_t HeadsetInterface::Init(Callbacks* callbacks, int max_hf_clients,
       << BTA_AG_MAX_NUM_CLIENTS << " was given " << max_hf_clients;
 
   btif_max_hf_clients = max_hf_clients;
+
+  // let bta also know about the max hf clients
+  BTA_AgSetMaxHfClients(max_hf_clients);
+
   BTIF_TRACE_DEBUG(
       "%s: btif_hf_features=%zu, max_hf_clients=%d, inband_ringing_enabled=%d",
       __func__, btif_hf_features, btif_max_hf_clients, inband_ringing_enabled);
@@ -921,6 +929,17 @@ static bt_status_t connect_int(RawAddress* bd_addr, uint16_t uuid) {
         "%s: Cannot connect %s: maximum %d clients already connected", __func__,
         bd_addr->ToString().c_str(), btif_max_hf_clients);
     return BT_STATUS_BUSY;
+  }
+
+  if (!btif_storage_is_device_bonded(bd_addr)) {
+    BTIF_TRACE_WARNING("HF %s()## connect_int ## Device Not Bonded %s \n", __func__,
+                         bd_addr->ToString().c_str());
+    btif_hf_cb[i].state = BTHF_CONNECTION_STATE_DISCONNECTED;
+    /* inform the application of the disconnection as the connection is not processed */
+    HAL_HF_CBACK(bt_hf_callbacks, ConnectionStateCallback, btif_hf_cb[i].state,
+                  bd_addr);
+    btif_queue_advance();
+    return BT_STATUS_SUCCESS;
   }
 
   if (is_connected(bd_addr)) {
@@ -1001,6 +1020,12 @@ bt_status_t HeadsetInterface::ConnectAudio(RawAddress* bd_addr) {
   if (!IsSlcConnected(bd_addr)) {
     LOG(ERROR) << ": SLC not connected for " << *bd_addr;
     return BT_STATUS_NOT_READY;
+  }
+
+  if (!is_active_device(*bd_addr)) {
+    LOG(ERROR) << "HF: ConnectAudio is called for inactive device, returning"
+               << *bd_addr;
+    return BT_STATUS_FAIL;
   }
 
   if (idx != BTIF_HF_INVALID_IDX) {
@@ -1170,7 +1195,7 @@ bt_status_t HeadsetInterface::DeviceStatusNotification(
     return BT_STATUS_FAIL;
   }
   int idx = btif_hf_idx_by_bdaddr(bd_addr);
-  if (idx < 0 || idx > BTA_AG_MAX_NUM_CLIENTS) {
+  if (idx < 0 || idx >= BTA_AG_MAX_NUM_CLIENTS) {
     BTIF_TRACE_WARNING("%s: invalid index %d for %s", __func__, idx,
                        bd_addr->ToString().c_str());
     return BT_STATUS_FAIL;
@@ -1304,7 +1329,7 @@ bt_status_t HeadsetInterface::FormattedAtResponse(const char* rsp,
   if (idx != BTIF_HF_INVALID_IDX) {
     /* Format the response and send */
     memset(&ag_res, 0, sizeof(ag_res));
-    strncpy(ag_res.str, rsp, BTA_AG_AT_MAX_LEN);
+    strlcpy(ag_res.str, rsp, BTA_AG_AT_MAX_LEN);
     BTA_AgResult(btif_hf_cb[idx].handle, BTA_AG_UNAT_RES, &ag_res);
 
     return BT_STATUS_SUCCESS;
@@ -1434,7 +1459,7 @@ bt_status_t HeadsetInterface::PhoneStateChange(
     return BT_STATUS_FAIL;
   }
   int idx = btif_hf_idx_by_bdaddr(bd_addr);
-  if (idx < 0 || idx > BTA_AG_MAX_NUM_CLIENTS) {
+  if (idx < 0 || idx >= BTA_AG_MAX_NUM_CLIENTS) {
     BTIF_TRACE_WARNING("%s: invalid index %d for %s", __func__, idx,
                        bd_addr->ToString().c_str());
     return BT_STATUS_FAIL;

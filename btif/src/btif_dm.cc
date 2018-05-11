@@ -73,6 +73,7 @@
 #include "osi/include/properties.h"
 #include "stack/btm/btm_int.h"
 #include "stack_config.h"
+#include "stack/sdp/sdpint.h"
 
 using bluetooth::Uuid;
 /******************************************************************************
@@ -593,6 +594,10 @@ static void bond_state_changed(bt_status_t status, const RawAddress& bd_addr,
     else
       BTIF_TRACE_DEBUG("%s: BR-EDR service discovery active", __func__);
   }
+  if (state == BT_BOND_STATE_NONE) {
+    // Update Pbap 1.2 entry, set rebonded to true
+    update_pce_entry_after_cancelling_bonding(bd_addr);
+  }
 }
 
 /* store remote version in bt config to always have access
@@ -733,6 +738,13 @@ static void btif_dm_cb_hid_remote_name(tBTM_REMOTE_DEV_NAME* p_remote_name) {
 static void btif_dm_cb_create_bond(const RawAddress& bd_addr,
                                    tBTA_TRANSPORT transport) {
   bool is_hid = check_cod(&bd_addr, COD_HID_POINTING);
+
+  if (btm_cb.pairing_state != BTM_PAIR_STATE_IDLE ) {
+    BTIF_TRACE_DEBUG("%s: btm_cb.pairing_state = %d, one pairing in progress ",
+                      __func__, btm_cb.pairing_state);
+    return;
+  }
+
   bond_state_changed(BT_STATUS_SUCCESS, bd_addr, BT_BOND_STATE_BONDING);
 
   int device_type;
@@ -938,6 +950,7 @@ static void btif_dm_pin_req_evt(tBTA_DM_PIN_REQ* p_pin_req) {
 
   const RawAddress& bd_addr = p_pin_req->bd_addr;
   memcpy(bd_name.name, p_pin_req->bd_name, BD_NAME_LEN);
+  bd_name.name[BD_NAME_LEN] = '\0';
 
   if (pairing_cb.state == BT_BOND_STATE_BONDING &&
         !(bd_addr == pairing_cb.bd_addr)) {
@@ -966,6 +979,7 @@ static void btif_dm_pin_req_evt(tBTA_DM_PIN_REQ* p_pin_req) {
       }
     if (check_cod(&bd_addr, COD_AV_HEADSETS) ||
         check_cod(&bd_addr, COD_AV_HEADPHONES) ||
+        check_cod(&bd_addr, COD_AV_HANDSFREE) ||
         check_cod(&bd_addr, COD_AV_PORTABLE_AUDIO) ||
         check_cod(&bd_addr, COD_AV_HIFI_AUDIO) ||
         check_cod(&bd_addr, COD_HID_POINTING)) {
@@ -1034,6 +1048,7 @@ static void btif_dm_ssp_cfm_req_evt(tBTA_DM_SP_CFM_REQ* p_ssp_cfm_req) {
 
   RawAddress bd_addr = p_ssp_cfm_req->bd_addr;
   memcpy(bd_name.name, p_ssp_cfm_req->bd_name, BD_NAME_LEN);
+  bd_name.name[BD_NAME_LEN] = '\0';
 
   if (pairing_cb.state == BT_BOND_STATE_BONDING &&
         !(bd_addr == pairing_cb.bd_addr)) {
@@ -1125,6 +1140,7 @@ static void btif_dm_ssp_key_notif_evt(tBTA_DM_SP_KEY_NOTIF* p_ssp_key_notif) {
 
   RawAddress bd_addr = p_ssp_key_notif->bd_addr;
   memcpy(bd_name.name, p_ssp_key_notif->bd_name, BD_NAME_LEN);
+  bd_name.name[BD_NAME_LEN] = '\0';
 
   bond_state_changed(BT_STATUS_SUCCESS, bd_addr, BT_BOND_STATE_BONDING);
   pairing_cb.is_ssp = true;
@@ -3049,6 +3065,7 @@ static void btif_dm_ble_key_notif_evt(tBTA_DM_SP_KEY_NOTIF* p_ssp_key_notif) {
                                        (tBT_DEVICE_TYPE)dev_type);
   bd_addr = p_ssp_key_notif->bd_addr;
   memcpy(bd_name.name, p_ssp_key_notif->bd_name, BD_NAME_LEN);
+  bd_name.name[BD_NAME_LEN] = '\0';
 
   bond_state_changed(BT_STATUS_SUCCESS, bd_addr, BT_BOND_STATE_BONDING);
   pairing_cb.is_ssp = false;
@@ -3245,6 +3262,7 @@ void btif_dm_ble_sec_req_evt(tBTA_DM_BLE_SEC_REQ* p_ble_req) {
 
   RawAddress bd_addr = p_ble_req->bd_addr;
   memcpy(bd_name.name, p_ble_req->bd_name, BD_NAME_LEN);
+  bd_name.name[BD_NAME_LEN] = '\0';
 
   bond_state_changed(BT_STATUS_SUCCESS, bd_addr, BT_BOND_STATE_BONDING);
 
@@ -3283,6 +3301,7 @@ static void btif_dm_ble_passkey_req_evt(tBTA_DM_PIN_REQ* p_pin_req) {
 
   RawAddress bd_addr = p_pin_req->bd_addr;
   memcpy(bd_name.name, p_pin_req->bd_name, BD_NAME_LEN);
+  bd_name.name[BD_NAME_LEN] = '\0';
 
   bond_state_changed(BT_STATUS_SUCCESS, bd_addr, BT_BOND_STATE_BONDING);
   pairing_cb.is_le_only = true;
@@ -3303,6 +3322,7 @@ static void btif_dm_ble_key_nc_req_evt(tBTA_DM_SP_KEY_NOTIF* p_notif_req) {
 
   bt_bdname_t bd_name;
   memcpy(bd_name.name, p_notif_req->bd_name, BD_NAME_LEN);
+  bd_name.name[BD_NAME_LEN] = '\0';
 
   bond_state_changed(BT_STATUS_SUCCESS, bd_addr, BT_BOND_STATE_BONDING);
   pairing_cb.is_ssp = false;

@@ -1866,7 +1866,8 @@ void btm_process_inq_results(uint8_t* p, uint8_t inq_res_mode) {
 
       /* If a callback is registered, call it with the results */
       if (p_inq_results_cb)
-        (p_inq_results_cb)((tBTM_INQ_RESULTS*)p_cur, p_eir_data, 62);
+        (p_inq_results_cb)((tBTM_INQ_RESULTS*)p_cur, p_eir_data,
+                           HCI_EXT_INQ_RESPONSE_LEN);
     }
   }
 }
@@ -2143,7 +2144,7 @@ void btm_process_remote_name(const RawAddress* bda, BD_NAME bdn,
     /* Clean up and return the status if the command was not successful */
     /* Note: If part of the inquiry, the name is not stored, and the    */
     /*       inquiry complete callback is called.                       */
-
+    rem_name.bd_addr = *bda;
     if (hci_status == HCI_SUCCESS) {
       /* Copy the name from the data stream into the return structure */
       /* Note that even if it is not being returned, it is used as a  */
